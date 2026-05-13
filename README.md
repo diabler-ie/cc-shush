@@ -22,6 +22,28 @@ capitulating to it.
 
 Backups land next to the original as `<binary>.bak.<YYYYMMDDTHHMMSS>`.
 
+## Suggested CLAUDE.md addition
+
+After installing, add a note to `~/.claude/CLAUDE.md` so future sessions
+know the binary is patched (and don't get confused when a reminder they
+might otherwise expect doesn't fire):
+
+```md
+## Local environment
+
+The `claude` binary on this machine is patched via `claude-shush` to blank
+the "task tools haven't been used recently..." system reminder. Re-run
+`claude-shush` after each Claude Code update.
+
+Task tools are worth reaching for on 4+ step work or when you're juggling
+independent threads. Skip them for 1-3 step operations.
+```
+
+The second paragraph is a replacement heuristic — it gives Claude a
+concrete threshold to anchor to instead of just removing the nudge and
+leaving nothing in its place. Tune the numbers (4+ steps, 1-3 step cap)
+to match your own workflow.
+
 ## What it does
 
 1. Resolves the `claude` binary (or takes a path argument).
