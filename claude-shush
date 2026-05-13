@@ -121,7 +121,7 @@ if [[ "$(uname)" == "Darwin" ]]; then
   codesign --force --sign - "$TARGET"
   codesign -dvv "$TARGET" 2>&1 | grep -E "(Identifier|Authority|Signature size)" || true
   echo
-  echo "  ! first launch will prompt for Keychain access."
+  echo "  ! if macOS prompts for Keychain access on first launch,"
   echo "  ! click 'Always Allow' to remember the new signature."
 fi
 

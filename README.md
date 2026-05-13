@@ -58,13 +58,15 @@ to match your own workflow.
 Anthropic ships `claude` with a Developer ID signature and hardened runtime.
 Patching invalidates the original signature, so the script re-signs ad-hoc.
 
-- **Keychain access:** on first launch after patching, macOS prompts for
-  access to claude's stored credentials. Click **Always Allow** once per
-  binary version. (The ad-hoc signature's identity is the binary hash, so
-  the trust persists for that exact patched file.)
+- **Keychain access:** in practice, the patched binary tends to launch
+  without prompting — Claude Code's Keychain item is created with a
+  permissive ACL that allows ad-hoc-signed binaries to read stored
+  credentials. If your Keychain is configured more strictly, macOS will
+  prompt on first launch; click **Always Allow** to remember the new
+  signature for that exact binary.
 - **Updates:** Claude Code installs each release as a separate file (e.g.
   `~/.local/share/claude/versions/2.1.140/`). After an update, rerun this
-  script on the new binary. You'll get one more Keychain prompt.
+  script on the new binary.
 
 ## Linux
 
