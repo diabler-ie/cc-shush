@@ -1,16 +1,18 @@
 # claude-shush
 
-Silences the **"task tools haven't been used recently..."** system reminder
-that Claude Code injects when it thinks you should be tracking your work.
+Patches Claude Code's compiled binary to fix two system reminders that
+don't carry their weight:
 
-The reminder is hardcoded into the compiled `claude` binary. There's no
-documented setting, env var, or hook to suppress it. This script blanks
-the reminder template in place, then re-signs the binary ad-hoc so macOS
-will still launch it.
+1. **Silences the "task tools haven't been used recently..."** nudge —
+   the reminder still fires mechanically, but its content is whitespace,
+   so the model doesn't see a judgment-eroding signal on short tasks.
+2. **Softens the "IMPORTANT: ... you MUST ... Do not ignore it." stack**
+   on the reminder that fires when you type a message while a tool is
+   running. Same information, neutral tone.
 
-The reminder still "fires" mechanically inside the harness, but its content
-is whitespace — so the model doesn't see a nudge, and you don't drift toward
-capitulating to it.
+Neither reminder is suppressible via documented settings, env vars, or
+hooks. This script byte-edits the binary in place and re-signs ad-hoc
+on macOS so it still launches.
 
 ## Usage
 
@@ -47,11 +49,17 @@ to match your own workflow.
 ## What it does
 
 1. Resolves the `claude` binary (or takes a path argument).
-2. Finds the live reminder template inside the binary by anchor strings.
-3. Overwrites the template content with spaces of equal length, preserving
-   binary layout (so offsets and codesigning hashes are the only things
-   that change).
+2. Walks a list of patches, each defined as either an **anchor-span**
+   (start + end anchor strings, used when the template contains runtime
+   `${...}` interpolations to preserve) or a **literal-replace** (exact
+   string match, used for fixed text like the IMPORTANT-MUST line).
+3. For anchor-spans, overwrites the matched span with spaces. For
+   literal-replaces, substitutes the new text and pads to the original
+   length. Either way, total binary length is preserved.
 4. On macOS, re-signs ad-hoc (`codesign --force --sign -`).
+
+Patches are declared in a list at the top of the script — add more
+entries if you find other reminders worth retuning.
 
 ## macOS caveats
 
@@ -83,12 +91,17 @@ re-sign is needed after restore.
 
 ## Why
 
-The reminder fires on a coarse heuristic ("no task tools used recently")
-without regard for whether the current work actually needs tracking. On
-short tasks it lands as a non-sequitur, and repeated firings can erode
-judgment — eventually you (or the model) capitulate to silence the prompt
-instead of trusting "this is two steps, no checklist needed."
+**Task-tool reminder:** fires on a coarse heuristic ("no task tools used
+recently") without regard for whether the current work actually needs
+tracking. On short tasks it lands as a non-sequitur, and repeated firings
+erode judgment — eventually you (or the model) capitulate to silence the
+prompt instead of trusting "this is two steps, no checklist needed."
 
-If you'd rather request a real setting from Anthropic, open an issue at
-<https://github.com/anthropics/claude-code/issues> proposing something
-like `suppressTaskReminder: true` in `settings.json`.
+**User-typed-mid-tool reminder:** the information is fine — "user added
+input mid-tool, address it after the current operation." But the original
+wraps it in IMPORTANT + you MUST + Do not ignore it, which reads like the
+harness defaults to assuming the model would otherwise plow through and
+ignore the user. Same signal, neutral framing.
+
+If you'd rather request real settings from Anthropic, open an issue at
+<https://github.com/anthropics/claude-code/issues>.

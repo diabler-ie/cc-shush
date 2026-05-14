@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# claude-shush: silence Claude Code's "task tools haven't been used" reminder
-# by blanking the string inside the compiled binary and re-signing ad-hoc.
+# claude-shush: patch Claude Code's harness reminders that don't carry their
+# weight — silence the "task tools haven't been used recently" nudge and
+# soften the all-caps "IMPORTANT: ... you MUST ..." stack on the user-typed-
+# mid-tool reminder.
 #
 # Idempotent. Backs up before patching. macOS re-signs ad-hoc; first launch
-# will prompt for Keychain access (click "Always Allow").
+# may prompt for Keychain access (click "Always Allow") depending on your
+# Keychain ACL.
 
 set -euo pipefail
 
@@ -11,17 +14,21 @@ usage() {
   cat <<'EOF'
 usage: claude-shush [-n] [path-to-claude-binary]
 
-Blanks the "task tools haven't been used recently..." system reminder
-inside the Claude Code binary so it stops nagging on short tasks.
+Patches Claude Code's compiled binary to:
+  1. Blank the "task tools haven't been used recently..." system reminder
+     so it stops nagging on short tasks.
+  2. Soften the "IMPORTANT: ... you MUST address the user's message ...
+     Do not ignore it." reminder that fires when the user types while
+     a tool is running — same information, neutral tone.
 
 If no path is given, resolves `which claude` and follows symlinks.
 
   -n   dry run: report what would change, modify nothing
   -h   show this help
 
-After patching, the binary is re-signed ad-hoc on macOS. The first launch
-will prompt for Keychain access — click "Always Allow" to remember the
-new signature for that binary version.
+After patching, the binary is re-signed ad-hoc on macOS. If your Keychain
+ACL is strict, the first launch will prompt for access; click "Always
+Allow" to remember the new signature for that binary version.
 
 The patch is per-binary. Each Claude Code update installs a new binary;
 rerun this script on the new file after each update.
@@ -45,7 +52,6 @@ else
     echo "error: 'claude' not on PATH; pass a path argument" >&2
     exit 1
   fi
-  # macOS readlink lacks -f; use python to resolve symlinks portably
   TARGET="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$(command -v claude)")"
 fi
 
@@ -62,54 +68,99 @@ import os, shutil, sys, time
 target = sys.argv[1]
 dry = os.environ.get("DRY", "0") == "1"
 
-START = b"The task tools haven't been used recently."
-END_PHRASE = b"ignore if not applicable."
-WINDOW = 2000
+PATCHES = [
+    {
+        "name": "task-tools reminder (blank content)",
+        "mode": "blank-span",
+        "start": b"The task tools haven't been used recently.",
+        "end": b"ignore if not applicable.",
+        "window": 2000,
+    },
+    {
+        "name": "user-typed-mid-tool reminder (soften tone)",
+        "mode": "replace-literal",
+        "literal": (
+            b"IMPORTANT: After completing your current task, you MUST address "
+            b"the user's message above. Do not ignore it."
+        ),
+        "replacement": b"Address the user's new message above after your current task completes.",
+    },
+]
 
 with open(target, "rb") as f:
     data = f.read()
 
-matches = []
-cursor = 0
-while True:
-    idx = data.find(START, cursor)
-    if idx < 0:
-        break
-    end_idx = data.find(END_PHRASE, idx, idx + WINDOW)
-    if end_idx >= 0:
-        stop = end_idx + len(END_PHRASE)
-        matches.append((idx, stop))
-        cursor = stop
-    else:
-        # START appears but no END nearby — likely a separate reference, skip.
-        cursor = idx + len(START)
+regions = []  # list of (start, stop, new_bytes, patch_name) for application
 
-if not matches:
-    print("no live reminder template found — already patched or unknown version.")
+for patch in PATCHES:
+    name = patch["name"]
+    if patch["mode"] == "blank-span":
+        start_anchor = patch["start"]
+        end_anchor = patch["end"]
+        window = patch["window"]
+        cursor = 0
+        found = 0
+        while True:
+            idx = data.find(start_anchor, cursor)
+            if idx < 0:
+                break
+            end_idx = data.find(end_anchor, idx, idx + window)
+            if end_idx >= 0:
+                stop = end_idx + len(end_anchor)
+                regions.append((idx, stop, b" " * (stop - idx), name))
+                cursor = stop
+                found += 1
+            else:
+                cursor = idx + len(start_anchor)
+        print(f"[{name}] found {found} occurrence(s)")
+    elif patch["mode"] == "replace-literal":
+        literal = patch["literal"]
+        replacement = patch["replacement"]
+        if len(replacement) > len(literal):
+            print(f"[{name}] ERROR: replacement longer than literal "
+                  f"({len(replacement)} > {len(literal)})")
+            sys.exit(1)
+        padded = replacement + b" " * (len(literal) - len(replacement))
+        cursor = 0
+        found = 0
+        while True:
+            idx = data.find(literal, cursor)
+            if idx < 0:
+                break
+            regions.append((idx, idx + len(literal), padded, name))
+            cursor = idx + len(literal)
+            found += 1
+        print(f"[{name}] found {found} occurrence(s)")
+    else:
+        print(f"[{name}] ERROR: unknown mode {patch['mode']!r}")
+        sys.exit(1)
+
+if not regions:
+    print("nothing to patch — already patched or unknown version.")
     sys.exit(0)
 
-print(f"found {len(matches)} reminder template(s):")
-for start, stop in matches:
-    print(f"  bytes {start}..{stop} ({stop-start} bytes)")
+print(f"\n{len(regions)} region(s) will be patched:")
+for start, stop, _, name in regions:
+    print(f"  {start}..{stop} ({stop-start} bytes) [{name}]")
 
 if dry:
-    print("dry run — not modifying.")
+    print("\ndry run — not modifying.")
     sys.exit(0)
 
 ts = time.strftime("%Y%m%dT%H%M%S")
 backup = f"{target}.bak.{ts}"
 shutil.copy2(target, backup)
-print(f"backup: {backup}")
+print(f"\nbackup: {backup}")
 
 new_data = bytearray(data)
-for start, stop in matches:
-    new_data[start:stop] = b" " * (stop - start)
+for start, stop, new_bytes, _ in regions:
+    new_data[start:stop] = new_bytes
 
 mode = os.stat(target).st_mode
 with open(target, "wb") as f:
     f.write(new_data)
 os.chmod(target, mode)
-print(f"patched {len(matches)} location(s) in-place.")
+print(f"patched {len(regions)} region(s) in-place.")
 PYEOF
 
 if [[ "$DRY" == "1" ]]; then
