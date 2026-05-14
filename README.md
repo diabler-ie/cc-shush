@@ -24,6 +24,35 @@ on macOS so it still launches.
 
 Backups land next to the original as `<binary>.bak.<YYYYMMDDTHHMMSS>`.
 
+## Automating with `cc-shush-watch` (macOS)
+
+Claude Code installs new versions roughly daily as separate files under
+`~/.local/share/claude/versions/`. `cc-shush-watch` automates re-running
+the patch via launchd:
+
+```sh
+./cc-shush-watch --install     # register the launchd agent
+./cc-shush-watch --uninstall   # remove it
+./cc-shush-watch --help        # show options
+```
+
+What `--install` does:
+
+- Writes `~/Library/LaunchAgents/com.cc-shush.watch.plist` and loads it.
+- The agent watches `~/.local/share/claude/versions/` and fires whenever
+  the directory changes (i.e., a new version is installed).
+- On each fire, the wrapper resolves the current `claude` binary and
+  checks its codesign signature:
+  - **Ad-hoc** → already patched by an earlier run; exit silently.
+  - **Anthropic Developer ID** → run `cc-shush` and notify on success.
+  - **Anything else** → log and skip (won't touch unknown binaries).
+- If `cc-shush` finds zero patchable anchors on an Anthropic-signed
+  binary, **notifies you that the patches are broken** — Anthropic has
+  changed the reminder wording and the script needs updating.
+
+Notifications use macOS `display notification` and appear in Notification
+Center. Logs accumulate at `~/.local/state/cc-shush/watch.log`.
+
 ## Suggested CLAUDE.md addition
 
 After installing, add a note to `~/.claude/CLAUDE.md` so future sessions

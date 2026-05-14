@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# cc-shush-watch: auto-run cc-shush when a new Claude Code version installs.
+# Designed to be invoked by a launchd agent that watches the versions
+# directory. Notifies (macOS) on patch success or anchor-drift failure.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CC_SHUSH="$SCRIPT_DIR/cc-shush"
+PLIST_LABEL="com.cc-shush.watch"
+PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
+WATCH_DIR="$HOME/.local/share/claude/versions"
+LOG="$HOME/.local/state/cc-shush/watch.log"
+
+usage() {
+  cat <<'EOF'
+usage: cc-shush-watch [--install | --uninstall | --help]
+
+Without arguments:
+  Resolves the current claude binary, checks whether it needs patching,
+  and runs cc-shush if so. Notifies via macOS notifications on success
+  or anchor-drift failure.
+
+--install:
+  Writes ~/Library/LaunchAgents/com.cc-shush.watch.plist and loads it.
+  The agent watches ~/.local/share/claude/versions/ and fires this
+  script whenever the directory changes (i.e., a new Claude Code
+  release is installed).
+
+--uninstall:
+  Unloads and removes the launchd agent.
+
+Logs to ~/.local/state/cc-shush/watch.log.
+EOF
+}
+
+notify() {
+  osascript -e "display notification \"$2\" with title \"$1\"" 2>/dev/null || true
+}
+
+log() {
+  mkdir -p "$(dirname "$LOG")"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"
+}
+
+cmd_install() {
+  mkdir -p "$(dirname "$PLIST_PATH")" "$(dirname "$LOG")"
+  cat > "$PLIST_PATH" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$PLIST_LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$SCRIPT_DIR/cc-shush-watch</string>
+    </array>
+    <key>WatchPaths</key>
+    <array>
+        <string>$WATCH_DIR</string>
+    </array>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>$LOG</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+EOF
+  launchctl unload "$PLIST_PATH" 2>/dev/null || true
+  launchctl load "$PLIST_PATH"
+  echo "installed: $PLIST_LABEL"
+  echo "  watching: $WATCH_DIR"
+  echo "  logs:     $LOG"
+  echo "  fires when a new version directory appears."
+}
+
+cmd_uninstall() {
+  if [[ -f "$PLIST_PATH" ]]; then
+    launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    rm "$PLIST_PATH"
+    echo "uninstalled: $PLIST_LABEL"
+  else
+    echo "no plist at $PLIST_PATH; nothing to remove"
+  fi
+}
+
+cmd_watch() {
+  if ! command -v claude >/dev/null 2>&1; then
+    log "claude not on PATH; nothing to do"
+    exit 0
+  fi
+  CLAUDE="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$(command -v claude)")"
+  if [[ ! -f "$CLAUDE" ]]; then
+    log "resolved claude path missing: $CLAUDE"
+    exit 0
+  fi
+
+  # capture signature in two steps to avoid pipefail+grep transient issues
+  SIG=$(codesign -dvv "$CLAUDE" 2>&1 || echo "CODESIGN_FAILED")
+  case "$SIG" in
+    *"Signature=adhoc"*)
+      log "already patched (ad-hoc signed): $CLAUDE"
+      exit 0
+      ;;
+    *"Authority=Developer ID Application: Anthropic"*)
+      : # legitimate Anthropic-signed binary — proceed to patch
+      ;;
+    *)
+      log "unknown signature state for $CLAUDE — skipping. codesign output follows:"
+      echo "$SIG" >> "$LOG"
+      exit 0
+      ;;
+  esac
+
+  log "examining $CLAUDE (Anthropic-signed, looks unpatched)"
+  if ! DRY=$("$CC_SHUSH" -n "$CLAUDE" 2>&1); then
+    log "cc-shush dry run errored:"
+    echo "$DRY" >> "$LOG"
+    notify "cc-shush failed" "Dry run errored on $(basename "$CLAUDE"). See log."
+    exit 1
+  fi
+  echo "$DRY" >> "$LOG"
+
+  REGIONS=$(echo "$DRY" | grep -oE "^[0-9]+ region\(s\) will be patched" | head -1 | grep -oE "^[0-9]+" || true)
+
+  if [[ -z "$REGIONS" || "$REGIONS" == "0" ]]; then
+    log "FAILURE: 0 patches matched on Anthropic-signed binary; anchors may have drifted"
+    notify "cc-shush — patches broken" "New Claude Code version installed but cc-shush's anchors didn't match. Check $LOG."
+    exit 1
+  fi
+
+  log "applying $REGIONS patches"
+  if ! "$CC_SHUSH" "$CLAUDE" >> "$LOG" 2>&1; then
+    log "FAILURE: cc-shush exited non-zero during apply"
+    notify "cc-shush failed" "Apply errored on $(basename "$CLAUDE"). See log."
+    exit 1
+  fi
+  log "applied $REGIONS patches successfully"
+  notify "cc-shush" "Patched $REGIONS region(s) in $(basename "$CLAUDE")."
+}
+
+case "${1:-}" in
+  --install)   cmd_install ;;
+  --uninstall) cmd_uninstall ;;
+  --help|-h)   usage ;;
+  "")          cmd_watch ;;
+  *)
+    echo "unknown argument: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
