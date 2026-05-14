@@ -1,4 +1,4 @@
-# claude-shush
+# cc-shush
 
 Patches Claude Code's compiled binary to fix two system reminders that
 don't carry their weight:
@@ -17,9 +17,9 @@ on macOS so it still launches.
 ## Usage
 
 ```sh
-./claude-shush          # patch the resolved `claude` binary
-./claude-shush -n       # dry run: report findings, modify nothing
-./claude-shush /path    # patch a specific binary
+./cc-shush          # patch the resolved `claude` binary
+./cc-shush -n       # dry run: report findings, modify nothing
+./cc-shush /path    # patch a specific binary
 ```
 
 Backups land next to the original as `<binary>.bak.<YYYYMMDDTHHMMSS>`.
@@ -33,9 +33,9 @@ might otherwise expect doesn't fire):
 ```md
 ## Local environment
 
-The `claude` binary on this machine is patched via `claude-shush` to blank
+The `claude` binary on this machine is patched via `cc-shush` to blank
 the "task tools haven't been used recently..." system reminder. Re-run
-`claude-shush` after each Claude Code update.
+`cc-shush` after each Claude Code update.
 
 Task tools are worth reaching for on 4+ step work or when you're juggling
 independent threads. Skip them for 1-3 step operations.

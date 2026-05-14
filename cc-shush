@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# claude-shush: patch Claude Code's harness reminders that don't carry their
+# cc-shush: patch Claude Code's harness reminders that don't carry their
 # weight — silence the "task tools haven't been used recently" nudge and
 # soften the all-caps "IMPORTANT: ... you MUST ..." stack on the user-typed-
 # mid-tool reminder.
@@ -12,7 +12,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: claude-shush [-n] [path-to-claude-binary]
+usage: cc-shush [-n] [path-to-claude-binary]
 
 Patches Claude Code's compiled binary to:
   1. Blank the "task tools haven't been used recently..." system reminder
